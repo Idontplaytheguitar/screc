@@ -307,7 +307,7 @@ fn windows_windows() -> Vec<WindowInfo> {
     use windows::Win32::Foundation::{BOOL, LPARAM, RECT};
     use windows::Win32::UI::WindowsAndMessaging::{
         EnumWindows, GetWindowRect, GetWindowTextW, GetWindowTextLengthW, GetClassNameW,
-        IsWindowVisible, GWL_STYLE, GetWindowLongW, WS_VISIBLE,
+        IsWindowVisible, GWL_STYLE, GetWindowLongW, WS_VISIBLE, WINDOW_STYLE,
     };
 
     static COLLECTED: Mutex<Vec<WindowInfo>> = Mutex::new(Vec::new());
@@ -315,8 +315,8 @@ fn windows_windows() -> Vec<WindowInfo> {
 
     unsafe extern "system" fn callback(hwnd: windows::Win32::Foundation::HWND, _l: LPARAM) -> BOOL {
         if !IsWindowVisible(hwnd).as_bool() { return BOOL(1); }
-        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
-        if (style & WS_VISIBLE) == 0 { return BOOL(1); }
+        let style = WINDOW_STYLE(GetWindowLongW(hwnd, GWL_STYLE) as u32);
+        if !style.contains(WS_VISIBLE) { return BOOL(1); }
         let mut len = GetWindowTextLengthW(hwnd);
         if len <= 0 { return BOOL(1); }
         len += 1;
@@ -348,7 +348,7 @@ fn windows_windows() -> Vec<WindowInfo> {
 #[cfg(target_os = "windows")]
 fn windows_screens() -> Vec<Screen> {
     use std::sync::Mutex;
-    use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, MonitorFromWindow, HMONITOR, MONITORINFOEXW, MONITOR_DEFAULTTOPRIMARY};
+    use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, MonitorFromWindow, HDC, HMONITOR, MONITORINFOEXW, MONITOR_DEFAULTTOPRIMARY};
     use windows::Win32::Foundation::{BOOL, LPARAM, RECT};
 
     static COLLECTED: Mutex<Vec<Screen>> = Mutex::new(Vec::new());
@@ -357,7 +357,7 @@ fn windows_screens() -> Vec<Screen> {
         g.clear();
     }
 
-    unsafe extern "system" fn callback(hmon: HMONITOR, _hdc: isize, lprect: *const RECT, _l: LPARAM) -> BOOL {
+    unsafe extern "system" fn callback(hmon: HMONITOR, _hdc: HDC, lprect: *mut RECT, _l: LPARAM) -> BOOL {
         let mut info: MONITORINFOEXW = MONITORINFOEXW::default();
         info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
         let mut g = COLLECTED.lock().unwrap();
@@ -367,7 +367,7 @@ fn windows_screens() -> Vec<Screen> {
             ((r.right - r.left) as u32, (r.bottom - r.top) as u32, r.left, r.top)
         } else { (0, 0, 0, 0) };
         let _ = GetMonitorInfoW(hmon, &mut info as *mut _ as _);
-        let name = String::from_utf16_lossy(&info.deviceName)
+        let name = String::from_utf16_lossy(&info.szDevice)
             .trim_end_matches('\0')
             .to_string();
         g.push(Screen {
