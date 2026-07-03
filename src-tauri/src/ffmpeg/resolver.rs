@@ -85,10 +85,26 @@ pub async fn ensure_ffmpeg(app: &AppHandle) -> AppResult<FfmpegPaths> {
     // 3. Download.
     emit_status(app, &FfmpegStatus::Downloading { progress: 0.0, message: "Preparing download…".into() });
     let paths = download_and_install(app, &cache_dir).await?;
-    let ver = crate::ffmpeg::runner::probe_version(&paths.ffmpeg).await.unwrap_or_else(|_| "unknown".into());
-    emit_status(app, &FfmpegStatus::Resolved { version: ver, paths: paths.clone() });
-    let _ = PATHS.set(paths.clone());
-    Ok(paths)
+    match crate::ffmpeg::runner::probe_version(&paths.ffmpeg).await {
+        Ok(ver) if major_version(&ver) >= MIN_VERSION => {
+            emit_status(app, &FfmpegStatus::Resolved { version: ver, paths: paths.clone() });
+            let _ = PATHS.set(paths.clone());
+            Ok(paths)
+        }
+        Ok(ver) => {
+            let msg = format!("downloaded FFmpeg reports version '{ver}' (need >= {MIN_VERSION}); the build may be incompatible");
+            emit_status(app, &FfmpegStatus::Failed { error: msg.clone() });
+            Err(AppError::Ffmpeg(msg))
+        }
+        Err(e) => {
+            let msg = format!("downloaded FFmpeg failed to start: {e}");
+            emit_status(app, &FfmpegStatus::Failed { error: msg.clone() });
+            // Clean up so the next attempt re-downloads.
+            let _ = std::fs::remove_file(&paths.ffmpeg);
+            let _ = std::fs::remove_file(&paths.ffprobe);
+            Err(AppError::Ffmpeg(msg))
+        }
+    }
 }
 
 fn app_data_dir(app: &AppHandle) -> AppResult<PathBuf> {
@@ -228,13 +244,20 @@ struct DownloadAsset {
     url: String,
 }
 
-fn download_asset() -> DownloadAsset {
-    let url = match () {
+fn download_asset<'a>() -> DownloadAsset {
+    let url: &'a str = match () {
         _ if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") => {
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+        }
+        _ if cfg!(target_os = "windows") && cfg!(target_arch = "aarch64") => {
+            // No native ARM64 build; use x64 build (runs via Windows emulation).
             "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
         }
         _ if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") => {
             "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
+        }
+        _ if cfg!(target_os = "linux") && cfg!(target_arch = "aarch64") => {
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linuxarm64-gpl.tar.xz"
         }
         _ if cfg!(target_os = "macos") && cfg!(target_arch = "x86_64") => {
             "https://evermeet.cx/ffmpeg/getrelease/zip"

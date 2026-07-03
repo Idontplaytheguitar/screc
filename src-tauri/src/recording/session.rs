@@ -40,20 +40,19 @@ pub async fn start_session(app: &AppHandle, mut config: RecordingConfig) -> AppR
 
     // Screen
     let screen_path = folder.join(format!("screen.{}", ext_for_container(&config.container)));
-    let (cmd, kind) = crate::recording::capture::screen_cmd(&config.screen, &config.video, &config.container, &screen_path)?;
+    let (cmd, _kind) = crate::recording::capture::screen_cmd(&config.screen, &config.video, &config.container, &screen_path)?;
     if !cmd.args.is_empty() {
         let stop = cmd.stop;
         let child = spawn_capture(cmd).await?;
         children.push((child, stop));
-            sources.push(SessionSource {
-                kind: "screen".into(),
-                label: config.screen.screen_id.clone(),
-                path: screen_path.to_string_lossy().into(),
-                stream_index: 0,
-                start_offset_ms: 0,
-                duration_ms: None,
-            });
-        let _ = kind;
+        sources.push(SessionSource {
+            kind: "screen".into(),
+            label: config.screen.screen_id.clone(),
+            path: screen_path.to_string_lossy().into(),
+            stream_index: 0,
+            start_offset_ms: 0,
+            duration_ms: None,
+        });
     }
 
     // Webcam
@@ -94,6 +93,53 @@ pub async fn start_session(app: &AppHandle, mut config: RecordingConfig) -> AppR
         }
     }
 
+    // Early failure detection: give processes a brief window to crash (bad
+    // device, missing codec, permission denied). ffmpeg prints errors to
+    // stderr very quickly in that case. Any child that has already exited
+    // before it could capture a frame is treated as a fatal error so the
+    // frontend knows the recording never started.
+    let early_check = tokio::time::Instant::now() + std::time::Duration::from_millis(400);
+    loop {
+        let mut all_alive = true;
+        for (child, _stop) in children.iter_mut() {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let stderr = child.stderr.take();
+                    let detail = match stderr {
+                        Some(mut s) => {
+                            use tokio::io::AsyncReadExt;
+                            let mut buf = Vec::with_capacity(4096);
+                            let _ = tokio::time::timeout(
+                                std::time::Duration::from_millis(150),
+                                s.read_to_end(&mut buf),
+                            ).await;
+                            String::from_utf8_lossy(&buf).to_string()
+                        }
+                        None => String::new(),
+                    };
+                    let msg = if detail.is_empty() {
+                        format!("capture process exited with {status} before producing output")
+                    } else {
+                        detail.lines().take(20).collect::<Vec<_>>().join("\n")
+                    };
+                    // Tear down siblings.
+                    for (other, _s) in children.iter_mut() { let _ = other.start_kill(); }
+                    let _ = std::fs::remove_dir_all(&folder);
+                    return Err(AppError::Recording(msg));
+                }
+                Ok(None) => {}
+                Err(_) => { all_alive = false; }
+            }
+        }
+        if all_alive && tokio::time::Instant::now() >= early_check {
+            break;
+        }
+        if !all_alive || tokio::time::Instant::now() >= early_check {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+    }
+
     let handle = RecordingHandle {
         session_id: session_id.clone(),
         folder: folder.clone(),
@@ -105,6 +151,70 @@ pub async fn start_session(app: &AppHandle, mut config: RecordingConfig) -> AppR
 
     let _ = app.emit("recording://started", &serde_json::json!({ "session_id": session_id, "folder": folder.to_string_lossy() }));
     Ok(session_id)
+}
+
+/// Pause a running session: suspend all capture processes so no frames are
+/// captured. On Unix uses SIGSTOP; on Windows this is currently a no-op
+/// (the UI still toggles, but capture continues — to be wired later).
+pub async fn pause_session(_app: &AppHandle, session_id: &str) -> AppResult<()> {
+    let g = SESSIONS.lock().unwrap();
+    let handle = g.get(session_id).ok_or_else(|| AppError::Recording("session not found".into()))?;
+    for (child, _stop) in handle.children.iter() {
+        if let Some(pid) = child.id() {
+            #[cfg(unix)]
+            { let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid as i32),
+                nix::sys::signal::Signal::SIGSTOP,
+            ); }
+            #[cfg(not(unix))]
+            { let _ = pid; }
+        }
+    }
+    Ok(())
+}
+
+/// Resume a paused session.
+pub async fn resume_session(_app: &AppHandle, session_id: &str) -> AppResult<()> {
+    let g = SESSIONS.lock().unwrap();
+    let handle = g.get(session_id).ok_or_else(|| AppError::Recording("session not found".into()))?;
+    for (child, _stop) in handle.children.iter() {
+        if let Some(pid) = child.id() {
+            #[cfg(unix)]
+            { let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid as i32),
+                nix::sys::signal::Signal::SIGCONT,
+            ); }
+            #[cfg(not(unix))]
+            { let _ = pid; }
+        }
+    }
+    Ok(())
+}
+
+/// Save a finished session to a user-chosen directory, copying each source
+/// file into the destination. Returns the list of written paths.
+pub fn save_session_to(handle_folder: &std::path::Path, dest: &std::path::Path) -> AppResult<Vec<PathBuf>> {
+    std::fs::create_dir_all(dest)?;
+    let manifest_path = handle_folder.join("session.json");
+    let mut written = Vec::new();
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(handle_folder)?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.file_name().map(|n| n != "session.json").unwrap_or(true))
+        .collect();
+    entries.sort();
+    for src in entries {
+        let name = src.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "asset".into());
+        let dst = dest.join(&name);
+        std::fs::copy(&src, &dst)?;
+        written.push(dst);
+    }
+    if manifest_path.exists() {
+        let dst = dest.join("session.json");
+        std::fs::copy(&manifest_path, &dst)?;
+        written.push(dst);
+    }
+    Ok(written)
 }
 
 /// Stop a running session: send 'q' to each ffmpeg (graceful), wait, write manifest.

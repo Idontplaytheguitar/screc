@@ -47,6 +47,22 @@ async fn stop_recording(app: AppHandle, session_id: String) -> AppResult<recordi
 }
 
 #[tauri::command]
+async fn pause_recording(app: AppHandle, session_id: String) -> AppResult<()> {
+    recording::pause_session(&app, &session_id).await
+}
+
+#[tauri::command]
+async fn resume_recording(app: AppHandle, session_id: String) -> AppResult<()> {
+    recording::resume_session(&app, &session_id).await
+}
+
+#[tauri::command]
+async fn save_recording_to(folder: String, dest: String) -> AppResult<Vec<String>> {
+    let written = recording::save_session_to(&PathBuf::from(&folder), &PathBuf::from(&dest))?;
+    Ok(written.into_iter().map(|p| p.to_string_lossy().into()).collect())
+}
+
+#[tauri::command]
 async fn list_recent_sessions(app: AppHandle) -> AppResult<Vec<recording::SessionManifest>> {
     recording::list_recent_sessions(&app).await
 }
@@ -153,6 +169,9 @@ pub fn run() {
             list_devices,
             start_recording,
             stop_recording,
+            pause_recording,
+            resume_recording,
+            save_recording_to,
             list_recent_sessions,
             load_session,
             probe_media,

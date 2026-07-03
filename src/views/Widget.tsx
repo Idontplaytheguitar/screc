@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Circle, Square, Monitor, Mic, MicOff, Volume2, VolumeX, Settings2, Crop,
-  Webcam, Layers, X, Clapperboard, Loader2, AlertTriangle, Save, Check,
+  Webcam, Layers, X, Clapperboard, Loader2, AlertTriangle, Check,
+  Pause, Play, Minus, Pencil, FolderDown,
 } from "lucide-react";
 import { platform } from "@tauri-apps/plugin-os";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   ipc, resizeWidget, closeWidget, openRegionSelector, onRegionSelected,
   onFfmpegStatus, openEditorWindow, openSettingsWindow,
@@ -16,6 +18,10 @@ import type { AudioDevice, AudioInput, DeviceList, FfmpegStatus, RecordingConfig
 const H_IDLE = 224;
 const H_RECORDING = 96;
 const H_COUNTDOWN = 132;
+const H_RECORDING_PROMPT = 132;
+const W_FULL = 372;
+const W_PILL = 220;
+const H_PILL = 40;
 
 type SourceMode = "screen" | "window" | "region";
 type WidgetState = "idle" | "countdown" | "recording";
@@ -55,8 +61,14 @@ export function Widget() {
   const [state, setState] = useState<WidgetState>("idle");
   const [countN, setCountN] = useState(0);
   const [elapsed, setElapsed] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const [minimized, setMinimized] = useState(false);
+  const [stopPrompt, setStopPrompt] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const sessRef = useRef<string | null>(null);
   const startRef = useRef(0);
+  const pausedAccumRef = useRef(0);
+  const pauseStartRef = useRef(0);
   const rafRef = useRef<number | null>(null);
   const countdownTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -90,11 +102,14 @@ export function Widget() {
   // compositors ignore runtime resizes, and every state fits in H_IDLE).
   useEffect(() => {
     let h: number;
-    if (state === "recording") h = H_RECORDING;
+    let w: number = W_FULL;
+    if (state === "recording" && stopPrompt) h = H_RECORDING_PROMPT;
+    else if (state === "recording" && minimized) { h = H_PILL; w = W_PILL; }
+    else if (state === "recording") h = H_RECORDING;
     else if (state === "countdown") h = H_COUNTDOWN;
     else h = H_IDLE;
-    void resizeWidget(h);
-  }, [state]);
+    void resizeWidget(h, w);
+  }, [state, minimized, stopPrompt]);
 
   // Region selection results from the overlay window.
   useEffect(() => {
@@ -192,16 +207,76 @@ export function Widget() {
     }
   }, []);
 
+  const togglePause = useCallback(async () => {
+    const id = sessRef.current;
+    if (!id) return;
+    try {
+      if (!paused) {
+        await ipc.pauseRecording(id);
+        pauseStartRef.current = performance.now();
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        setPaused(true);
+      } else {
+        await ipc.resumeRecording(id);
+        pausedAccumRef.current += performance.now() - pauseStartRef.current;
+        const loop = () => {
+          setElapsed((performance.now() - startRef.current - pausedAccumRef.current) / 1000);
+          rafRef.current = requestAnimationFrame(loop);
+        };
+        loop();
+        setPaused(false);
+      }
+    } catch (e) {
+      setErr(String(e));
+    }
+  }, [paused]);
+
+  const confirmStop = useCallback(() => setStopPrompt(true), []);
+  const cancelStop = useCallback(() => setStopPrompt(false), []);
+
+  const stopAndSaveTo = useCallback(async () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    const id = sessRef.current;
+    sessRef.current = null;
+    setStopping(true);
+    setStopPrompt(false);
+    if (id) {
+      try {
+        const manifest = await ipc.stopRecording(id);
+        const picked = await open({ directory: true, multiple: false, title: "Save recording to…" });
+        const dest = typeof picked === "string" ? picked : (picked as string[] | null)?.[0];
+        if (dest) {
+          await ipc.saveRecordingTo(manifest.folder, dest);
+          if (rafRef.current) cancelAnimationFrame(rafRef.current);
+          await ipc.openInFileManager(dest);
+        }
+      } catch (e) {
+        setErr(String(e));
+      }
+    }
+    setStopping(false);
+    setState("idle");
+    setMinimized(false);
+    setPaused(false);
+  }, []);
+
   // Esc: stop while recording, cancel during countdown.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      if (state === "recording") { e.preventDefault(); void stop(true); }
-      if (state === "countdown") { e.preventDefault(); cancelCountdown(); }
+      if (state === "recording") {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          if (stopPrompt) { cancelStop(); } else { confirmStop(); }
+        } else if (e.key === "p" || e.key === "P") {
+          e.preventDefault();
+          if (!stopPrompt) { void togglePause(); }
+        }
+      }
+      if (state === "countdown" && e.key === "Escape") { e.preventDefault(); cancelCountdown(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [state, stop, cancelCountdown]);
+  }, [state, stop, cancelCountdown, stopPrompt, confirmStop, cancelStop, togglePause]);
 
   const mics = useMemo(() => devices?.audio.filter((a) => a.kind === "mic") ?? [], [devices]);
   const loops = useMemo(() => devices?.audio.filter((a) => a.kind === "system_loopback") ?? [], [devices]);
@@ -276,18 +351,117 @@ export function Widget() {
         </div>
       )}
 
-      {state === "recording" && (
-        <div className="flex-1 flex items-center gap-2 px-3">
-          <button
-            className="flex-1 h-10 rounded-lg flex items-center justify-center gap-2 text-sm font-medium text-white border border-[var(--color-danger)] bg-[var(--color-danger)]/90 hover:bg-[var(--color-danger)] transition-colors"
-            onClick={() => void stop(true)}
-            title="Stop and open in the editor (Esc)"
-          >
-            <Square className="w-3.5 h-3.5 fill-current" /> Stop & edit
-          </button>
-          <button className="icon-btn !w-10 !h-10 border border-[var(--color-border-strong)]" onClick={() => void stop(false)} title="Stop and save without editing">
-            <Save className="w-4 h-4" />
-          </button>
+      {state === "recording" && !stopPrompt && (
+        <div className="flex-1 flex flex-col px-3 py-2.5 gap-2">
+          {/* Minimized pill */}
+          {minimized ? (
+            <div className="flex-1 flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-danger)] animate-pulse shrink-0" />
+              <span className="font-mono text-[11px] tabular-nums flex-1">{formatTime(elapsed, true)}</span>
+              {paused && <Pause className="w-3 h-3 text-[var(--color-text-dim)] shrink-0" />}
+              <button
+                className="icon-btn !w-7 !h-7 border border-[var(--color-border-strong)]"
+                onClick={() => void togglePause()}
+                title={paused ? "Resume (P)" : "Pause (P)"}
+              >
+                {paused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+              </button>
+              <button
+                className="icon-btn !w-7 !h-7 border border-[var(--color-border-strong)]"
+                onClick={confirmStop}
+                title="Stop (Esc)"
+              >
+                <Square className="w-3.5 h-3.5 fill-current" />
+              </button>
+              <button
+                className="icon-btn !w-7 !h-7 border border-[var(--color-border-strong)]"
+                onClick={() => setMinimized(false)}
+                title="Expand"
+              >
+                <PlusIcon />
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between px-1">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-danger)] animate-pulse" />
+                  <span className="font-mono text-xs tabular-nums">{formatTime(elapsed, true)}</span>
+                  {paused && (
+                    <span className="ml-1.5 text-[10px] text-[var(--color-text-dim)] flex items-center gap-1">
+                      <Pause className="w-2.5 h-2.5" /> Paused
+                    </span>
+                  )}
+                </span>
+                <button
+                  className="icon-btn !w-7 !h-7"
+                  onClick={() => setMinimized(true)}
+                  title="Minimize to pill"
+                >
+                  <Minus className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="flex-1 flex items-center gap-2">
+                <button
+                  className={`flex-1 h-10 rounded-lg flex items-center justify-center gap-2 text-sm font-medium border transition-colors ${
+                    paused
+                      ? "border-[var(--color-accent)] text-[var(--color-accent)]"
+                      : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                  }`}
+                  onClick={() => void togglePause()}
+                  title={paused ? "Resume (P)" : "Pause (P)"}
+                >
+                  {paused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+                  <span className="text-xs">{paused ? "Resume" : "Pause"}</span>
+                </button>
+                <button
+                  className="flex-1 h-10 rounded-lg flex items-center justify-center gap-2 text-sm font-semibold text-white border border-[var(--color-danger)] bg-[var(--color-danger)]/90 hover:bg-[var(--color-danger)] transition-colors"
+                  onClick={confirmStop}
+                  title="Stop (Esc)"
+                >
+                  <Square className="w-3.5 h-3.5 fill-current" /> Stop
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {state === "recording" && stopPrompt && (
+        <div className="flex-1 flex flex-col px-3 py-2.5 gap-2">
+          <div className="text-xs text-[var(--color-text-dim)] px-1">Stop recording?</div>
+          <div className="flex-1 grid grid-cols-3 gap-1.5">
+            <button
+              className="h-9 rounded-lg flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium border border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors"
+              onClick={() => { setStopPrompt(false); void stop(true); }}
+              title="Open in editor"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+              Edit
+            </button>
+            <button
+              className="h-9 rounded-lg flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+              onClick={() => void stopAndSaveTo()}
+              title="Save to a folder"
+            >
+              <FolderDown className="w-3.5 h-3.5" />
+              Save
+            </button>
+            <button
+              className="h-9 rounded-lg flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium border border-[var(--color-border)] text-[var(--color-text-dim)] hover:text-[var(--color-text)] transition-colors"
+              onClick={cancelStop}
+              title="Keep recording"
+            >
+              <X className="w-3.5 h-3.5" />
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {stopping && (
+        <div className="absolute inset-0 flex items-center justify-center bg-[var(--color-surface)]/80 z-10">
+          <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-dim)]" />
         </div>
       )}
 
@@ -405,5 +579,13 @@ function QuickToggle({ on, disabled, onClick, iconOn, iconOff, label, title }: {
     >
       {on ? iconOn : iconOff}{label}
     </button>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
   );
 }
