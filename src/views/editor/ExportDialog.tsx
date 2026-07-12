@@ -42,7 +42,7 @@ const PRESETS = [
   { id: "webm-vp9", label: "WebM · VP9", fmt: "webm", vcodec: "libvpx-vp9", w: 1920, h: 1080, fps: 30, crf: 30, acodec: "libopus", abr: 128 },
 ];
 
-export function ExportDialog({ onClose }: { onClose: () => void }) {
+export function ExportDialog({ onClose, defaultDir }: { onClose: () => void; defaultDir?: string | null }) {
   const project = useEditor((s) => s.project);
   const [preset, setPreset] = useState("web-1080");
   const [format, setFormat] = useState("mp4");
@@ -80,7 +80,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
 
   const start = async () => {
     if (!outputPath) { await pickPath(); }
-    const out = outputPath ?? defaultName;
+    const out = outputPath ?? (defaultDir ? `${defaultDir}/${defaultName}` : defaultName);
     setPhase("running"); setProgress(null); setErr(null);
     const settings: ExportSettings = {
       format, video_codec: vcodec, audio_codec: acodec, fps,

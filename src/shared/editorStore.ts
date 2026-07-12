@@ -74,7 +74,7 @@ function edit(s: EditorState, project: ExportProject): Partial<EditorState> {
   return { project, past, future: [] };
 }
 
-export const useEditor = create<EditorState>((set) => ({
+export const useEditor = create<EditorState>((set, get) => ({
   project: emptyProject(),
   past: [],
   future: [],
@@ -125,25 +125,29 @@ export const useEditor = create<EditorState>((set) => ({
   renameTrack: (trackId, name) =>
     set((s) => edit(s, { ...s.project, tracks: s.project.tracks.map((t) => (t.id === trackId ? { ...t, name } : t)) })),
 
-  addClip: (trackId, clip) =>
+  addClip: (trackId, clip) => {
     set((s) => ({
       ...edit(s, {
         ...s.project,
         tracks: s.project.tracks.map((t) => (t.id === trackId ? { ...t, clips: [...t.clips, clip] } : t)),
       }),
       selectedClipId: clip.id,
-    })),
+    }));
+    get().recomputeDuration();
+  },
 
-  updateClip: (trackId, clipId, patch) =>
+  updateClip: (trackId, clipId, patch) => {
     set((s) =>
       edit(s, {
         ...s.project,
         tracks: s.project.tracks.map((t) =>
           t.id === trackId ? { ...t, clips: t.clips.map((c) => (c.id === clipId ? { ...c, ...patch } : c)) } : t
         ),
-      })),
+      }));
+    if (patch.timeline_start !== undefined || patch.timeline_duration !== undefined) get().recomputeDuration();
+  },
 
-  removeClip: (trackId, clipId) =>
+  removeClip: (trackId, clipId) => {
     set((s) => ({
       ...edit(s, {
         ...s.project,
@@ -152,7 +156,9 @@ export const useEditor = create<EditorState>((set) => ({
         ),
       }),
       selectedClipId: s.selectedClipId === clipId ? null : s.selectedClipId,
-    })),
+    }));
+    get().recomputeDuration();
+  },
 
   splitAtPlayhead: (trackId) =>
     set((s) => {
@@ -173,7 +179,7 @@ export const useEditor = create<EditorState>((set) => ({
       });
     }),
 
-  rippleDelete: (trackId, clipId) =>
+  rippleDelete: (trackId, clipId) => {
     set((s) => {
       const track = s.project.tracks.find((t) => t.id === trackId);
       if (!track) return {};
@@ -196,9 +202,11 @@ export const useEditor = create<EditorState>((set) => ({
         }),
         selectedClipId: s.selectedClipId === clipId ? null : s.selectedClipId,
       };
-    }),
+    });
+    get().recomputeDuration();
+  },
 
-  duplicateClip: (trackId, clipId) =>
+  duplicateClip: (trackId, clipId) => {
     set((s) => {
       const track = s.project.tracks.find((t) => t.id === trackId);
       if (!track) return {};
@@ -212,16 +220,20 @@ export const useEditor = create<EditorState>((set) => ({
         }),
         selectedClipId: copy.id,
       };
-    }),
+    });
+    get().recomputeDuration();
+  },
 
-  moveClip: (trackId, clipId, deltaStart) =>
+  moveClip: (trackId, clipId, deltaStart) => {
     set((s) =>
       edit(s, {
         ...s.project,
         tracks: s.project.tracks.map((t) =>
           t.id === trackId ? { ...t, clips: t.clips.map((c) => (c.id === clipId ? { ...c, timeline_start: Math.max(0, c.timeline_start + deltaStart) } : c)) } : t
         ),
-      })),
+      }));
+    get().recomputeDuration();
+  },
 
   recomputeDuration: () =>
     set((s) => {

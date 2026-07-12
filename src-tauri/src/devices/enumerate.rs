@@ -58,8 +58,6 @@ pub struct DeviceList {
 }
 
 pub async fn enumerate_devices() -> AppResult<DeviceList> {
-    let _ = resolver::get(); // ensure ffmpeg resolved; listing may still use system tools
-
     #[cfg(target_os = "linux")]
     return linux_devices().await;
     #[cfg(target_os = "macos")]
@@ -68,6 +66,12 @@ pub async fn enumerate_devices() -> AppResult<DeviceList> {
     return windows_devices().await;
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     return Err(AppError::Platform("unsupported OS".into()));
+}
+
+/// Path to the ffmpeg binary: the resolved one if available, otherwise the
+/// system `ffmpeg` on PATH (used only to list devices).
+fn ffmpeg_bin() -> std::path::PathBuf {
+    resolver::get().map(|p| p.ffmpeg.clone()).unwrap_or_else(|_| std::path::PathBuf::from("ffmpeg"))
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +213,7 @@ async fn macos_devices() -> AppResult<DeviceList> {
     let mut webcams = Vec::new();
     let mut audio = Vec::new();
 
-    if let Ok(out) = Command::new("ffmpeg")
+    if let Ok(out) = Command::new(ffmpeg_bin())
         .args(["-list_devices", "true", "-f", "avfoundation", "-i", "dummy"])
         .output().await
     {
@@ -263,7 +267,7 @@ async fn windows_devices() -> AppResult<DeviceList> {
 
     // dshow -list_devices true (stderr parse)
     use tokio::process::Command;
-    if let Ok(out) = Command::new("ffmpeg")
+    if let Ok(out) = Command::new(ffmpeg_bin())
         .args(["-list_devices", "true", "-f", "dshow", "-i", "dummy"])
         .output().await
     {
@@ -293,12 +297,41 @@ async fn windows_devices() -> AppResult<DeviceList> {
             }
         }
     }
-    // WASAPI loopback for system audio is always available on Win10+.
-    let supports_system_audio = true;
+    // WASAPI loopback devices (what you hear) for system audio.
+    let mut loopback = windows_loopback();
+    audio.append(&mut loopback);
+
+    let supports_system_audio = !loopback.is_empty();
 
     let win_list = windows_windows();
 
     Ok(DeviceList { screens, webcams, audio, windows: win_list, supports_system_audio })
+}
+
+/// Enumerate WASAPI render endpoints via ffmpeg's `-f wasapi -list_devices`.
+/// Capturing one of these records system audio (loopback).
+#[cfg(target_os = "windows")]
+fn windows_loopback() -> Vec<AudioDevice> {
+    use std::process::Command as SyncCommand;
+    let out = SyncCommand::new(ffmpeg_bin())
+        .args(["-list_devices", "true", "-f", "wasapi", "-i", "dummy"])
+        .output();
+    let mut devices = Vec::new();
+    if let Ok(out) = out {
+        let s = String::from_utf8_lossy(&out.stderr);
+        for line in s.lines() {
+            let line = line.trim();
+            if let Some(start) = line.find('"') {
+                if let Some(end) = line.rfind('"') {
+                    if end > start {
+                        let name = line[start + 1..end].to_string();
+                        devices.push(AudioDevice { id: name.clone(), name, kind: AudioKind::SystemLoopback });
+                    }
+                }
+            }
+        }
+    }
+    devices
 }
 
 #[cfg(target_os = "windows")]

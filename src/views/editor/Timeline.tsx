@@ -232,7 +232,8 @@ function ClipView({ clip, track, zoom, color, snap }: { clip: Clip; track: Track
   const [thumbs, setThumbs] = useState<string[]>([]);
   const [waveform, setWaveform] = useState<string | null>(null);
 
-  // Thumbnails for video, waveform for audio.
+  // Thumbnails for video, waveform for audio. Only regenerate when the source
+  // or track kind changes — not on every trim-drag frame (timeline_duration).
   useEffect(() => {
     if (track.kind === "video" && clip.source_path) {
       const cacheDir = clip.source_path.replace(/\.[^.]+$/, "") + ".thumbs";
@@ -242,7 +243,7 @@ function ClipView({ clip, track, zoom, color, snap }: { clip: Clip; track: Track
       const cache = clip.source_path + ".wave.png";
       ipc.genWaveform(clip.source_path, cache).then(() => setWaveform(fileUrl(cache))).catch(() => setWaveform(null));
     }
-  }, [clip.source_path, clip.timeline_duration, track.kind]);
+  }, [clip.source_path, track.kind]);
 
   const left = clip.timeline_start * zoom;
   const width = Math.max(8, clip.timeline_duration * zoom);

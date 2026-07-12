@@ -177,9 +177,16 @@ fn cache_paths(app_data: &Path) -> FfmpegPaths {
 }
 
 fn major_version(version: &str) -> u32 {
-    let v = version.to_lowercase();
-    let v = v.strip_prefix("ffmpeg version").unwrap_or(&v).trim_start();
-    v.split('.').next().unwrap_or("0").trim().parse().unwrap_or(0)
+    let v = version.trim();
+    let v = v.strip_prefix("ffmpeg version").unwrap_or(v).trim();
+    // BtbN/master builds report "ffmpeg version N-12345-gabcdef..." — skip the
+    // non-digit build tag and parse the first run of digits.
+    let digits: String = v
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    digits.parse().unwrap_or(0)
 }
 
 async fn download_and_install(app: &AppHandle, app_data: &Path) -> AppResult<FfmpegPaths> {
@@ -260,10 +267,10 @@ fn download_asset<'a>() -> DownloadAsset {
             "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linuxarm64-gpl.tar.xz"
         }
         _ if cfg!(target_os = "macos") && cfg!(target_arch = "x86_64") => {
-            "https://evermeet.cx/ffmpeg/getrelease/zip"
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-macos64-gpl.tar.xz"
         }
         _ if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") => {
-            "https://www.osxexperts.net/ffmpeg7arm.zip"
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-macosarm64-gpl.tar.xz"
         }
         _ => "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz",
     };

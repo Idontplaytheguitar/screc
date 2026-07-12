@@ -316,9 +316,10 @@ fn windows_audio(ai: &AudioInput, out_path: &Path) -> AppResult<(Vec<String>, &'
             a.push("-i".into()); a.push(format!("audio={}", ai.device_id));
         }
         crate::devices::AudioKind::SystemLoopback => {
-            // WASAPI loopback: capture the default render endpoint.
-            a.push("-f".into()); a.push("dshow".into());
-            a.push("-i".into()); a.push(format!("audio={}", ai.device_id));
+            // WASAPI loopback: recording the named render endpoint captures
+            // whatever is playing to it (system audio).
+            a.push("-f".into()); a.push("wasapi".into());
+            a.push("-i".into()); a.push(format!("\"{}\"", ai.device_id));
         }
     }
     a.push("-c:a".into()); a.push("pcm_s16le".into());

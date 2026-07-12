@@ -1,6 +1,6 @@
 [package]
 name = "screc"
-version = "0.1.2"
+version = "0.1.3"
 description = "Lightweight screen recorder + editor"
 authors = ["screc"]
 edition = "2021"

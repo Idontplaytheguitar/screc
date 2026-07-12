@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Film } from "lucide-react";
 import { useEditor } from "@/shared/editorStore";
 import { fileUrl } from "@/shared/utils";
@@ -31,6 +31,21 @@ export function PreviewPlayer() {
     }
     return out;
   }, [project.tracks, playhead]);
+
+  // Live version used by the playback clock: recomputes the active set from the
+  // current store + time so clips that begin after playback started still play.
+  const activeAt = useCallback((tracks: Track[], t: number): { clip: Clip; track: Track }[] => {
+    const out: { clip: Clip; track: Track }[] = [];
+    for (const track of tracks) {
+      if (track.muted) continue;
+      for (const clip of track.clips) {
+        if (t >= clip.timeline_start - 0.001 && t < clip.timeline_start + clip.timeline_duration) {
+          out.push({ clip, track });
+        }
+      }
+    }
+    return out;
+  }, []);
 
   const videoClips = active.filter((a) => a.track.kind === "video");
   const audioClips = active.filter((a) => a.track.kind === "audio");
@@ -65,7 +80,8 @@ export function PreviewPlayer() {
   useEffect(() => {
     const map = mediaRefs.current;
     const seekAll = (t: number) => {
-      for (const { clip } of active) {
+      const live = activeAt(useEditor.getState().project.tracks, t);
+      for (const { clip } of live) {
         const el = map.get(clip.id);
         if (!el) continue;
         const target = clip.source_in + (t - clip.timeline_start) * clip.speed;
@@ -75,7 +91,11 @@ export function PreviewPlayer() {
 
     if (playing) {
       seekAll(playhead);
-      for (const { clip } of active) { const el = map.get(clip.id); if (el) void el.play().catch(() => {}); }
+      const playingNow = new Set<string>();
+      for (const { clip } of activeAt(useEditor.getState().project.tracks, playhead)) {
+        const el = map.get(clip.id);
+        if (el) { void el.play().catch(() => {}); playingNow.add(clip.id); }
+      }
       lastTickRef.current = performance.now();
       const loop = () => {
         const now = performance.now();
@@ -85,23 +105,35 @@ export function PreviewPlayer() {
         if (next >= project.duration && project.duration > 0) {
           setPlayhead(project.duration);
           setPlaying(false);
-          for (const { clip } of active) { const el = map.get(clip.id); el?.pause(); }
+          for (const [id, el] of map) { if (playingNow.has(id)) el.pause(); }
           return;
         }
         setPlayhead(next);
-        // Resync drifters.
-        for (const { clip } of active) {
+        // Play/seek the currently-active clips (recomputed each frame) and pause
+        // any clip that just fell out of the active window.
+        const live = activeAt(useEditor.getState().project.tracks, next);
+        const liveIds = new Set(live.map((a) => a.clip.id));
+        for (const [id, el] of map) {
+          if (playingNow.has(id) && !liveIds.has(id)) { el.pause(); playingNow.delete(id); }
+        }
+        for (const { clip } of live) {
           const el = map.get(clip.id);
           if (!el) continue;
+          if (!playingNow.has(clip.id)) { void el.play().catch(() => {}); playingNow.add(clip.id); }
           const target = clip.source_in + (next - clip.timeline_start) * clip.speed;
           if (Math.abs(el.currentTime - target) > 0.25) { try { el.currentTime = target; } catch { /* */ } }
         }
         rafRef.current = requestAnimationFrame(loop);
       };
       rafRef.current = requestAnimationFrame(loop);
-      return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+      return () => {
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        for (const [id, el] of map) { if (playingNow.has(id)) el.pause(); }
+      };
     } else {
-      for (const { clip } of active) { const el = map.get(clip.id); el?.pause(); }
+      for (const { clip } of activeAt(useEditor.getState().project.tracks, playhead)) {
+        const el = map.get(clip.id); el?.pause();
+      }
       seekAll(playhead);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

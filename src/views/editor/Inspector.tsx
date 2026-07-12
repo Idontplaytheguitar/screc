@@ -56,8 +56,8 @@ export function Inspector() {
           )}
 
           <Section icon={<Waves className="w-3.5 h-3.5" />} title="Fades">
-            <Slider label="Fade in" value={selected.clip.fade_in} min={0} max={Math.min(5, selected.clip.timeline_duration / 2)} step={0.05} onChange={(v) => updateClip(selected!.trackId, selected!.clip.id, { fade_in: v })} format={(v) => `${v.toFixed(2)}s`} />
-            <Slider label="Fade out" value={selected.clip.fade_out} min={0} max={Math.min(5, selected.clip.timeline_duration / 2)} step={0.05} onChange={(v) => updateClip(selected!.trackId, selected!.clip.id, { fade_out: v })} format={(v) => `${v.toFixed(2)}s`} />
+            <Slider label="Fade in" value={selected.clip.fade_in} min={0} max={Math.max(0.1, Math.min(5, selected.clip.timeline_duration / 2))} step={0.05} onChange={(v) => updateClip(selected!.trackId, selected!.clip.id, { fade_in: v })} format={(v) => `${v.toFixed(2)}s`} />
+            <Slider label="Fade out" value={selected.clip.fade_out} min={0} max={Math.max(0.1, Math.min(5, selected.clip.timeline_duration / 2))} step={0.05} onChange={(v) => updateClip(selected!.trackId, selected!.clip.id, { fade_out: v })} format={(v) => `${v.toFixed(2)}s`} />
           </Section>
 
           {project.tracks.find((t) => t.id === selected!.trackId)?.kind === "text" && (

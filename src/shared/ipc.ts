@@ -33,8 +33,8 @@ export const ipc = {
   exportProject: (project: ExportProject, settings: ExportSettings) =>
     invoke<void>("export_project", { project, settings }),
   grabScreenFrame: (screen: { id: string; x: number; y: number; width: number; height: number }) =>
-    invoke<string>("grab_screen_frame", { screenId: screen.id, x: screen.x, y: screen.y, width: screen.width, height: screen.height }),
-  pickOutputPath: (default_name: string) => invoke<string | null>("pick_output_path", { defaultName: default_name }),
+    invoke<string>("grab_screen_frame", { screen_id: screen.id, x: screen.x, y: screen.y, width: screen.width, height: screen.height }),
+  pickOutputPath: (default_name: string) => invoke<string | null>("pick_output_path", { default_name }),
   openInFileManager: (path: string) => invoke<void>("open_in_file_manager", { path }),
 };
 

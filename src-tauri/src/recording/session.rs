@@ -211,6 +211,23 @@ pub fn save_session_to(handle_folder: &std::path::Path, dest: &std::path::Path) 
     }
     if manifest_path.exists() {
         let dst = dest.join("session.json");
+        // Rewrite the manifest so paths point at the new location, otherwise
+        // re-opening the saved session would probe the original (now moved) files.
+        if let Ok(data) = std::fs::read(&manifest_path) {
+            if let Ok(mut manifest) = serde_json::from_slice::<SessionManifest>(&data) {
+                manifest.folder = dest.to_string_lossy().into();
+                for source in manifest.sources.iter_mut() {
+                    if let Some(file_name) = std::path::Path::new(&source.path).file_name() {
+                        source.path = dest.join(file_name).to_string_lossy().into();
+                    }
+                }
+                if let Ok(bytes) = serde_json::to_vec_pretty(&manifest) {
+                    std::fs::write(&dst, bytes)?;
+                    written.push(dst);
+                    return Ok(written);
+                }
+            }
+        }
         std::fs::copy(&manifest_path, &dst)?;
         written.push(dst);
     }
@@ -221,6 +238,18 @@ pub fn save_session_to(handle_folder: &std::path::Path, dest: &std::path::Path) 
 pub async fn stop_session(app: &AppHandle, session_id: &str) -> AppResult<SessionManifest> {
     let handle_opt = { SESSIONS.lock().unwrap().remove(session_id) };
     let mut handle = handle_opt.ok_or_else(|| AppError::Recording("session not found".into()))?;
+
+    // Resume any paused children first so they can drain stdin and finalize
+    // (a SIGSTOP'd ffmpeg won't process the 'q' and would be killed mid-mux).
+    #[cfg(unix)]
+    for (child, _) in handle.children.iter() {
+        if let Some(pid) = child.id() {
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid as i32),
+                nix::sys::signal::Signal::SIGCONT,
+            );
+        }
+    }
 
     // Graceful stop: 'q' on stdin for ffmpeg, SIGINT for external recorders — both
     // flush the muxer. Kill only if a process ignores the request.

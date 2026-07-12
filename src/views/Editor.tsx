@@ -215,7 +215,7 @@ function EditView({ folder, onBack }: { folder: string | null; onBack: () => voi
         </div>
       )}
 
-      {exportOpen && <ExportDialog onClose={() => setExportOpen(false)} />}
+      {exportOpen && <ExportDialog onClose={() => setExportOpen(false)} defaultDir={folder} />}
     </div>
   );
 }

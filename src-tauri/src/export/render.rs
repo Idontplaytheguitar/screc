@@ -29,29 +29,37 @@ pub async fn export_project(app: &AppHandle, project: &ExportProject, settings: 
         args.push(filter);
     }
     args.push("-map".into()); args.push("[vout]".into());
-    args.push("-map".into()); args.push("[aout]".into());
 
-    // Encoder args
-    args.push("-c:v".into()); args.push(resolve_codec(&settings.video_codec).into());
-    if let Some(b) = settings.video_bitrate {
-        args.push("-b:v".into()); args.push(format!("{}", b));
-    } else if let Some(c) = settings.crf {
-        args.push("-crf".into()); args.push(format!("{}", c));
-    }
-    args.push("-preset".into()); args.push(settings.preset.clone());
-    args.push("-pix_fmt".into()); args.push("yuv420p".into());
-    args.push("-r".into()); args.push(format!("{}", settings.fps));
+    let is_gif = settings.format == "gif";
+    if !is_gif {
+        args.push("-map".into()); args.push("[aout]".into());
+        // Encoder args
+        args.push("-c:v".into()); args.push(resolve_codec(&settings.video_codec).into());
+        if let Some(b) = settings.video_bitrate {
+            args.push("-b:v".into()); args.push(format!("{}", b));
+        } else if let Some(c) = settings.crf {
+            args.push("-crf".into()); args.push(format!("{}", c));
+        }
+        args.push("-preset".into()); args.push(settings.preset.clone());
+        args.push("-pix_fmt".into()); args.push("yuv420p".into());
+        args.push("-r".into()); args.push(format!("{}", settings.fps));
 
-    args.push("-c:a".into()); args.push(resolve_audio_codec(&settings.audio_codec, &settings.format).into());
-    if let Some(b) = settings.audio_bitrate {
-        args.push("-b:a".into()); args.push(format!("{}", b));
+        args.push("-c:a".into()); args.push(resolve_audio_codec(&settings.audio_codec, &settings.format).into());
+        if let Some(b) = settings.audio_bitrate {
+            args.push("-b:a".into()); args.push(format!("{}", b));
+        }
+        args.push("-ar".into()); args.push(format!("{}", settings.audio_sample_rate));
+        args.push("-ac".into()); args.push(format!("{}", settings.audio_channels));
+    } else {
+        args.push("-c:v".into()); args.push("gif".into());
+        args.push("-pix_fmt".into()); args.push("rgb8".into());
     }
-    args.push("-ar".into()); args.push(format!("{}", settings.audio_sample_rate));
-    args.push("-ac".into()); args.push(format!("{}", settings.audio_channels));
 
     // Format
     args.push("-f".into()); args.push(container_fmt(&settings.format).into());
-    args.push("-movflags".into()); args.push("+faststart".into());
+    if matches!(settings.format.as_str(), "mp4" | "mov") {
+        args.push("-movflags".into()); args.push("+faststart".into());
+    }
     args.push("-progress".into()); args.push("pipe:2".into());
     args.push("-y".into());
     args.push(settings.output_path.clone());
@@ -127,21 +135,20 @@ fn build_filtergraph(project: &ExportProject, settings: &ExportSettings) -> AppR
     let out_h = settings.height;
 
     // --- VIDEO -------------------------------------------------------------
-    // Separate video (incl. webcam) and text tracks, ordered bottom->top.
+    // Build a transformed stream per clip, then overlay clips bottom->top in
+    // track order. Each overlay is enabled only during its timeline window so
+    // sequential clips on one track don't collide, and honors per-clip x/y/scale.
     let video_tracks: Vec<&crate::export::model::Track> = project.tracks.iter()
         .filter(|t| matches!(t.kind, TrackKind::Video))
         .collect();
 
-    let mut track_video_labels: Vec<String> = Vec::new();
+    let mut clip_streams: Vec<(String, f64, f64, f64, f64)> = Vec::new(); // label, x, y, start, dur
     for (ti, track) in video_tracks.iter().enumerate() {
         if track.muted { continue; }
-        let clips: Vec<&Clip> = track.clips.iter().collect();
-        if clips.is_empty() { continue; }
-        let mut clip_labels: Vec<String> = Vec::new();
-        for (ci, c) in clips.iter().enumerate() {
+        for (ci, c) in track.clips.iter().enumerate() {
+            if c.source_path.is_empty() { continue; }
             let in_idx = *input_map.get(&c.source_path).unwrap_or(&0);
             let label = format!("v{}_{}", ti, ci);
-            // trim + setpts + speed + scale + opacity + position
             let mut f = format!(
                 "[{}:v]trim=start={:0.3}:end={:0.3},setpts=PTS-STARTPTS",
                 in_idx, c.source_in, c.source_out
@@ -149,48 +156,40 @@ fn build_filtergraph(project: &ExportProject, settings: &ExportSettings) -> AppR
             if c.speed != 1.0 {
                 f.push_str(&format!(",setpts=PTS/{}", c.speed));
             }
-            // scale to overlay size (scale factor relative to output)
             let sw = ((out_w as f64) * c.scale).round() as i32;
             let sh = ((out_h as f64) * c.scale).round() as i32;
-            f.push_str(&format!(",scale={}:{}", sw, sh));
+            f.push_str(&format!(",scale={}:{}", sw.max(1), sh.max(1)));
             if c.opacity < 1.0 {
                 f.push_str(&format!(",format=yuva420p,colorchannelmixer=aa={:0.3}", c.opacity));
             }
             if c.fade_in > 0.0 || c.fade_out > 0.0 {
                 let fi = c.fade_in;
                 let fo = c.fade_out;
-                f.push_str(&format!(",fade=t=in:st=0:d={:0.3}:alpha=1,fade=t=out:st={:0.3}:d={:0.3}:alpha=1", fi, c.timeline_duration - fo, fo));
+                f.push_str(&format!(
+                    ",fade=t=in:st=0:d={:0.3}:alpha=1,fade=t=out:st={:0.3}:d={:0.3}:alpha=1",
+                    fi, (c.timeline_duration - fo).max(0.0), fo
+                ));
             }
             filters.push(format!("{}[{}]", f, label));
-            clip_labels.push(label);
+            clip_streams.push((label, c.x, c.y, c.timeline_start, c.timeline_duration));
         }
-        // Concatenate clips on this track into one stream.
-        let concat_inputs = clip_labels.iter().map(|l| format!("[{}]", l)).collect::<Vec<_>>().join("");
-        let track_label = format!("vtrack{}", ti);
-        filters.push(format!("{}concat=n={}:v=1:a=0[{}]", concat_inputs, clip_labels.len(), track_label));
-        track_video_labels.push(track_label);
     }
 
-    // Composite: bottom track is base (scaled to output), overlay each higher track.
+    // Composite: first clip is the base, subsequent clips overlay (with temporal enable).
     let mut video_final: String;
-    if track_video_labels.is_empty() {
-        // No video: produce a black background.
+    if clip_streams.is_empty() {
         filters.push(format!("color=c=black:s={}x{}:d={:0.3}[vbase]", out_w, out_h, project.duration));
         video_final = "vbase".to_string();
     } else {
-        // Scale base to output.
-        let base = &track_video_labels[0];
-        filters.push(format!("[{}]scale={}:{}[vbase]", base, out_w, out_h));
-        video_final = "vbase".to_string();
-        for (i, tl) in track_video_labels.iter().enumerate().skip(1) {
-            let track = video_tracks[i];
-            // Use first clip's position; ideally per-clip but simplify.
-            let x = (track.clips.first().map(|c| c.x).unwrap_or(0.0) * out_w as f64).round() as i32;
-            let y = (track.clips.first().map(|c| c.y).unwrap_or(0.0) * out_h as f64).round() as i32;
+        video_final = clip_streams[0].0.clone();
+        for (i, (label, x, y, start, dur)) in clip_streams.iter().enumerate().skip(1) {
+            let px = (x * out_w as f64).round() as i32;
+            let py = (y * out_h as f64).round() as i32;
             let next = format!("vcomp{}", i);
+            let enable = format!("enable='between(t,{:0.3},{:0.3})'", start, start + dur);
             filters.push(format!(
-                "[{}][{}]overlay={}:{}:eof_action=endall[{}]",
-                video_final, tl, x, y, next
+                "[{}][{}]overlay={}:{}:eof_action=endall:{}[{}]",
+                video_final, label, px, py, enable, next
             ));
             video_final = next;
         }

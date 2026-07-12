@@ -23,6 +23,13 @@ export function RegionSelector() {
   const [start, setStart] = useState<{ x: number; y: number } | null>(null);
   const [cur, setCur] = useState<{ x: number; y: number } | null>(null);
   const [done, setDone] = useState(false);
+  // Real screenshot pixel size, read from the loaded image. Falls back to the
+  // passed-in width/height (which is zeroed on some platforms) when unavailable.
+  const [shotSize, setShotSize] = useState<{ w: number; h: number } | null>(null);
+  const pxW = shotSize?.w ?? (pw > 0 ? pw : 0);
+  const pxH = shotSize?.h ?? (ph > 0 ? ph : 0);
+  const sx = pxW > 0 ? pxW / window.innerWidth : 1;
+  const sy = pxH > 0 ? pxH / window.innerHeight : 1;
 
   const cancel = useCallback(async () => {
     await emit("region://cancel", {});
@@ -51,9 +58,9 @@ export function RegionSelector() {
     const width = Math.abs(cur.x - start.x);
     const height = Math.abs(cur.y - start.y);
     if (width < 8 || height < 8) { setStart(null); setCur(null); return; }
-    // CSS px → physical px of the captured screen.
-    const sx = pw > 0 ? pw / window.innerWidth : 1;
-    const sy = ph > 0 ? ph / window.innerHeight : 1;
+    // CSS px → physical px of the captured screen (sx/sy derived from the
+    // real screenshot pixel size, so this works even when the OS reports no
+    // screen geometry).
     const even = (n: number) => Math.max(2, Math.floor(n / 2) * 2);
     const rect: Rect = {
       x: ox + Math.round(x * sx),
@@ -92,6 +99,10 @@ export function RegionSelector() {
           className="absolute inset-0 w-full h-full"
           alt=""
           draggable={false}
+          onLoad={(e) => {
+            const img = e.currentTarget;
+            if (img.naturalWidth && img.naturalHeight) setShotSize({ w: img.naturalWidth, h: img.naturalHeight });
+          }}
         />
       )}
       {/* Dim everything outside the selection */}
@@ -106,7 +117,7 @@ export function RegionSelector() {
             style={{ left: live.x, top: live.y, width: live.width, height: live.height, boxShadow: "0 0 0 1px rgba(0,0,0,0.4), 0 0 16px rgba(99,102,241,0.4)" }}
           >
             <span className="absolute -top-6 left-0 text-xs text-white font-mono bg-[var(--color-accent)] px-1.5 py-0.5 rounded whitespace-nowrap shadow-lg">
-              {Math.round(live.width * (pw > 0 ? pw / window.innerWidth : 1))}×{Math.round(live.height * (ph > 0 ? ph / window.innerHeight : 1))}
+              {Math.round(live.width * sx)}×{Math.round(live.height * sy)}
             </span>
           </div>
         </>
