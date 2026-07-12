@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import { Film } from "lucide-react";
 import { useEditor } from "@/shared/editorStore";
 import { fileUrl } from "@/shared/utils";
 import type { Clip, Track } from "@/shared/types";
@@ -170,8 +171,16 @@ export function PreviewPlayer() {
             </div>
           ))}
           {!videoClips.length && (
-            <div className="absolute inset-0 flex items-center justify-center text-[var(--color-text-faint)] text-sm">
-              No video at playhead
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-[var(--color-text-faint)] pointer-events-none">
+              {project.tracks.length === 0 ? (
+                <>
+                  <Film className="w-7 h-7 opacity-60" />
+                  <span className="text-sm">No clips on the timeline</span>
+                  <span className="text-xs opacity-70">Import media or open a recording</span>
+                </>
+              ) : (
+                <span className="text-sm">No video at playhead</span>
+              )}
             </div>
           )}
         </div>

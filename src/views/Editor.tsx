@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  ArrowLeft, Download, Film, Type, Loader2, Undo2, Redo2, FilePlus2,
+  ArrowLeft, Download, Film, Type, Undo2, Redo2, FilePlus2,
   FolderOpen, Play, Clock, Monitor, Video, Music, Plus, Circle,
 } from "lucide-react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
@@ -8,6 +8,7 @@ import { useEditor, emptyProject, makeClip } from "@/shared/editorStore";
 import { loadSessionAsProject } from "@/shared/sessionLoader";
 import { ipc, onOpenSession, openWidgetWindow } from "@/shared/ipc";
 import { formatDate, formatTime, fileUrl, uid } from "@/shared/utils";
+import { Skeleton } from "@/shared/ui";
 import type { SessionManifest } from "@/shared/types";
 import { PreviewPlayer } from "./editor/PreviewPlayer";
 import { Timeline } from "./editor/Timeline";
@@ -37,9 +38,9 @@ export function Editor() {
   }, []);
 
   if (mode.kind === "library") {
-    return <Library onOpen={(folder) => setMode({ kind: "edit", folder })} onBlank={() => setMode({ kind: "edit", folder: null })} />;
+    return <div key="library" className="fade-in h-full"><Library onOpen={(folder) => setMode({ kind: "edit", folder })} onBlank={() => setMode({ kind: "edit", folder: null })} /></div>;
   }
-  return <EditView folder={mode.folder} onBack={() => setMode({ kind: "library" })} />;
+  return <div key="edit" className="fade-in h-full"><EditView folder={mode.folder} onBack={() => setMode({ kind: "library" })} /></div>;
 }
 
 function EditView({ folder, onBack }: { folder: string | null; onBack: () => void }) {
@@ -183,13 +184,27 @@ function EditView({ folder, onBack }: { folder: string | null; onBack: () => voi
       </header>
 
       {loading ? (
-        <div className="flex-1 flex items-center justify-center text-[var(--color-text-faint)] gap-2">
-          <Loader2 className="w-5 h-5 animate-spin" /> Loading session…
+        <div className="flex-1 min-h-0 flex flex-col">
+          <div className="flex-1 min-h-0 flex">
+            <div className="flex-1 bg-black p-4 flex items-center justify-center">
+              <Skeleton className="w-full h-full rounded-md" />
+            </div>
+            <div className="w-72 shrink-0 border-l border-[var(--color-border)] p-4 flex flex-col gap-4">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-2/3" />
+            </div>
+          </div>
+          <div className="h-[300px] shrink-0 border-t border-[var(--color-border)] p-3 flex flex-col gap-2">
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-12 w-full" />
+          </div>
         </div>
       ) : err ? (
         <div className="flex-1 flex items-center justify-center text-[var(--color-danger)] text-sm p-8 text-center">{err}</div>
       ) : (
-        <>
+        <div className="flex-1 min-h-0 flex flex-col slide-up">
           <div className="flex-1 min-h-0 flex">
             <PreviewPlayer />
             <Inspector />
@@ -197,7 +212,7 @@ function EditView({ folder, onBack }: { folder: string | null; onBack: () => voi
           <div className="h-[300px] shrink-0">
             <Timeline />
           </div>
-        </>
+        </div>
       )}
 
       {exportOpen && <ExportDialog onClose={() => setExportOpen(false)} />}
@@ -239,9 +254,11 @@ function Library({ onOpen, onBlank }: { onOpen: (folder: string) => void; onBlan
           </div>
 
           {loading ? (
-            <div className="card p-8 text-center text-sm text-[var(--color-text-faint)]">Loading…</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 stagger">
+              {Array.from({ length: 4 }).map((_, i) => <LibrarySkeleton key={i} />)}
+            </div>
           ) : sessions.length === 0 ? (
-            <div className="card p-10 flex flex-col items-center gap-3 text-center">
+            <div className="card p-10 flex flex-col items-center gap-3 text-center slide-up">
               <FolderOpen className="w-8 h-8 text-[var(--color-text-faint)]" />
               <p className="text-sm text-[var(--color-text-dim)]">No recordings yet</p>
               <p className="text-xs text-[var(--color-text-faint)] max-w-sm">
@@ -252,7 +269,7 @@ function Library({ onOpen, onBlank }: { onOpen: (folder: string) => void; onBlan
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 stagger">
               {sessions.map((s) => (
                 <SessionCard key={s.session_id} session={s} onOpen={() => onOpen(s.folder)} />
               ))}
@@ -272,9 +289,9 @@ function SessionCard({ session, onOpen }: { session: SessionManifest; onOpen: ()
   const dur = session.sources.find((s) => s.duration_ms)?.duration_ms ?? durMs;
 
   return (
-    <div className="card overflow-hidden flex group">
+    <div className="card overflow-hidden flex group hover:border-[var(--color-border-strong)] transition-colors">
       <button onClick={onOpen} className="flex-1 flex text-left">
-        <div className="w-32 shrink-0 bg-black relative">
+        <div className="w-32 shrink-0 bg-black relative overflow-hidden">
           {screen ? (
             <Thumb path={screen.path} />
           ) : (
@@ -322,6 +339,19 @@ function Thumb({ path }: { path: string }) {
     const cache = path + ".poster.jpg";
     ipc.genThumbnail(path, 1, cache).then(() => setSrc(fileUrl(cache))).catch(() => setSrc(null));
   }, [path]);
-  if (!src) return <div className="w-full h-full bg-black" />;
-  return <img src={src} className="w-full h-full object-cover" alt="" />;
+  if (src) return <img src={src} className="w-full h-full object-cover" alt="" />;
+  return <div className="w-full h-full bg-[var(--color-surface-3)]" />;
+}
+
+function LibrarySkeleton() {
+  return (
+    <div className="card overflow-hidden flex">
+      <div className="skeleton w-32 shrink-0 rounded-none" />
+      <div className="flex-1 p-3 flex flex-col gap-2">
+        <Skeleton className="h-3 w-24" />
+        <Skeleton className="h-3 w-32" />
+        <Skeleton className="h-3 w-16 mt-auto" />
+      </div>
+    </div>
+  );
 }

@@ -111,8 +111,8 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
     : progress?.kind === "finished" && progress.success ? 100 : phase === "running" ? 0 : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="card w-[560px] max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm fade-in" onClick={onClose}>
+      <div className="card w-[560px] max-h-[90vh] flex flex-col pop-in" onClick={(e) => e.stopPropagation()}>
         <div className="h-12 shrink-0 flex items-center justify-between px-4 border-b border-[var(--color-border)]">
           <div className="flex items-center gap-2">
             <Download className="w-4 h-4 text-[var(--color-accent-hover)]" />

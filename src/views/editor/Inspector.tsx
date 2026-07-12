@@ -27,7 +27,7 @@ export function Inspector() {
           </p>
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-5">
+        <div key={selected.clip.id} className="flex-1 overflow-y-auto p-4 flex flex-col gap-5 fade-in">
           <Section icon={<Gauge className="w-3.5 h-3.5" />} title="Timing">
             <Row label="In"><span className="font-mono text-xs">{formatTime(selected.clip.source_in, true)}</span></Row>
             <Row label="Out"><span className="font-mono text-xs">{formatTime(selected.clip.source_out, true)}</span></Row>
@@ -114,13 +114,14 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 function Slider({ label, value, min, max, step, onChange, format }: { label: string; value: number; min: number; max: number; step: number; onChange: (v: number) => void; format: (v: number) => string }) {
+  const pct = ((value - min) / (max - min)) * 100;
   return (
     <div className="field">
       <div className="flex items-center justify-between">
         <label className="field-label">{label}</label>
         <span className="text-xs text-[var(--color-text-dim)] font-mono">{format(value)}</span>
       </div>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(+e.target.value)} className="w-full" />
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(+e.target.value)} className="w-full" style={{ background: `linear-gradient(90deg, var(--color-accent) ${pct}%, var(--color-surface-3) ${pct}%)` }} />
     </div>
   );
 }

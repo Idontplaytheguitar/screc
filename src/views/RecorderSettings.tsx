@@ -7,6 +7,7 @@ import { ipc, getCurrentWindow } from "@/shared/ipc";
 import { usePersistentState } from "@/shared/usePersistentState";
 import { Panel, Field, Toggle } from "@/recorder/primitives";
 import { CODECS, CONTAINERS, FPS, QUALITY } from "@/recorder/constants";
+import { Skeleton } from "@/shared/ui";
 import type { DeviceList } from "@/shared/types";
 
 /** Recorder options, shown in a dedicated small window opened from the widget. */
@@ -62,18 +63,26 @@ export function RecorderSettings() {
       <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-3">
         <Panel icon={<Mic className="w-3.5 h-3.5" />} title="Audio devices">
           <div className="text-[10px] text-[var(--color-text-faint)] -mt-1">Each source records to its own track</div>
-          {mics.length > 0 && <div className="text-[9px] uppercase tracking-wider text-[var(--color-text-faint)]">Microphones</div>}
-          {mics.map((a) => <AudioRow key={a.id} name={a.name} checked={audioSel.includes(a.id)} onToggle={() => toggleAudio(a.id)} />)}
-          <div className="text-[9px] uppercase tracking-wider text-[var(--color-text-faint)] mt-1">System audio</div>
-          {loops.length === 0 && <div className="text-[10px] text-[var(--color-text-faint)]">{devices && !devices.supports_system_audio ? "Not supported on this OS" : "None found"}</div>}
-          {loops.map((a) => <AudioRow key={a.id} name={a.name} checked={audioSel.includes(a.id)} onToggle={() => toggleAudio(a.id)} loopback />)}
+          {devices === null ? (
+            <div className="flex flex-col gap-1.5">
+              {Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-7 w-full" />)}
+            </div>
+          ) : (
+            <>
+              {mics.length > 0 && <div className="text-[9px] uppercase tracking-wider text-[var(--color-text-faint)]">Microphones</div>}
+              {mics.map((a) => <AudioRow key={a.id} name={a.name} checked={audioSel.includes(a.id)} onToggle={() => toggleAudio(a.id)} />)}
+              <div className="text-[9px] uppercase tracking-wider text-[var(--color-text-faint)] mt-1">System audio</div>
+              {loops.length === 0 && <div className="text-[10px] text-[var(--color-text-faint)]">{devices && !devices.supports_system_audio ? "Not supported on this OS" : "None found"}</div>}
+              {loops.map((a) => <AudioRow key={a.id} name={a.name} checked={audioSel.includes(a.id)} onToggle={() => toggleAudio(a.id)} loopback />)}
+            </>
+          )}
         </Panel>
 
         <Panel icon={<Webcam className="w-3.5 h-3.5" />} title="Webcam">
           {!webcamOn && <div className="text-[10px] text-[var(--color-text-faint)] -mt-1">Enable the camera from the widget to record it</div>}
           <Field label="Device">
             <select className="select" value={webcamId} onChange={(e) => setWebcamId(e.target.value)}>
-              {devices?.webcams.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+              {devices === null ? <option>Loading…</option> : devices.webcams.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               {devices && devices.webcams.length === 0 && <option disabled>None found</option>}
             </select>
           </Field>

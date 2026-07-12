@@ -116,9 +116,9 @@ export function Timeline() {
             {/* Playhead */}
             <div
               className="absolute top-0 bottom-0 w-px bg-[var(--color-accent)] pointer-events-none z-20"
-              style={{ left: playhead * zoom }}
+              style={{ left: playhead * zoom, boxShadow: "0 0 8px 1px var(--color-accent)" }}
             >
-              <div className="absolute -top-0 -left-1.5 w-3 h-3 bg-[var(--color-accent)] rotate-45 -translate-y-1.5" />
+              <div className="absolute -top-0 -left-1.5 w-3 h-3 bg-[var(--color-accent)] rotate-45 -translate-y-1.5 shadow-[0_0_8px_1px_var(--color-accent)]" />
             </div>
           </div>
         </div>
@@ -294,7 +294,7 @@ function ClipView({ clip, track, zoom, color, snap }: { clip: Clip; track: Track
 
   return (
     <div
-      className={`absolute top-1 bottom-1 rounded-md overflow-hidden border-2 ${selected ? "border-white/90 z-10" : "border-black/30"}`}
+      className={`absolute top-1 bottom-1 rounded-md overflow-hidden border-2 fade-in ${selected ? "border-white/90 z-10 ring-2 ring-white/20" : "border-black/30 hover:border-white/40"} transition-[border-color,box-shadow] duration-150`}
       style={{ left, width, background: `linear-gradient(180deg, ${color}, ${color}cc)`, cursor: "grab" }}
       onMouseDown={(e) => startDrag(e, "move")}
       onMouseDownCapture={(e) => { if (e.button === 0) selectClip(clip.id); }}
@@ -317,8 +317,8 @@ function ClipView({ clip, track, zoom, color, snap }: { clip: Clip; track: Track
       </div>
 
       {/* Trim handles */}
-      <div className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-white/30" onMouseDown={(e) => startDrag(e, "trimL")} />
-      <div className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-white/30" onMouseDown={(e) => startDrag(e, "trimR")} />
+      <div className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-white/30 transition-colors" onMouseDown={(e) => startDrag(e, "trimL")} />
+      <div className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-white/30 transition-colors" onMouseDown={(e) => startDrag(e, "trimR")} />
     </div>
   );
 }

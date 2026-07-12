@@ -12,6 +12,7 @@ import {
 } from "@/shared/ipc";
 import { usePersistentState } from "@/shared/usePersistentState";
 import { formatTime } from "@/shared/utils";
+import { Spinner } from "@/shared/ui";
 import { QUALITY } from "@/recorder/constants";
 import type { AudioDevice, AudioInput, DeviceList, FfmpegStatus, RecordingConfig, Region, ScreenCapture } from "@/shared/types";
 
@@ -345,14 +346,14 @@ export function Widget() {
       </div>
 
       {state === "countdown" && (
-        <div className="flex-1 flex items-center justify-between px-4">
+        <div key="countdown" className="pop-in flex-1 flex items-center justify-between px-4">
           <div className="text-4xl font-bold tabular-nums text-[var(--color-accent-hover)] pl-2">{countN || "Go"}</div>
           <button className="btn btn-outline" onClick={cancelCountdown}>Cancel</button>
         </div>
       )}
 
       {state === "recording" && !stopPrompt && (
-        <div className="flex-1 flex flex-col px-3 py-2.5 gap-2">
+        <div key="recording" className="pop-in flex-1 flex flex-col px-3 py-2.5 gap-2">
           {/* Minimized pill */}
           {minimized ? (
             <div className="flex-1 flex items-center gap-2">
@@ -428,7 +429,7 @@ export function Widget() {
       )}
 
       {state === "recording" && stopPrompt && (
-        <div className="flex-1 flex flex-col px-3 py-2.5 gap-2">
+        <div key="stopprompt" className="pop-in flex-1 flex flex-col px-3 py-2.5 gap-2">
           <div className="text-xs text-[var(--color-text-dim)] px-1">Stop recording?</div>
           <div className="flex-1 grid grid-cols-3 gap-1.5">
             <button
@@ -466,7 +467,7 @@ export function Widget() {
       )}
 
       {state === "idle" && (
-        <div className="flex-1 min-h-0 flex flex-col px-3 py-2.5 gap-2">
+        <div key="idle" className="pop-in flex-1 min-h-0 flex flex-col px-3 py-2.5 gap-2">
           {/* Source mode */}
           <div className="flex rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] p-0.5">
             <SegBtn active={sourceMode === "screen"} onClick={() => setSourceMode("screen")} icon={<Monitor className="w-3.5 h-3.5" />} label="Screen" />
@@ -475,11 +476,16 @@ export function Widget() {
           </div>
 
           {/* Source picker */}
-          {sourceMode === "window" ? (
+          {devices === null ? (
+            <>
+              <div className="skeleton h-8 w-full" />
+              <div className="skeleton h-8 w-full" />
+            </>
+          ) : sourceMode === "window" ? (
             <select className="select !py-1.5 text-xs" value={windowId} onChange={(e) => setWindowId(e.target.value)}>
               <option value="">Pick a window…</option>
-              {devices?.windows.map((w) => <option key={w.id} value={w.id}>{w.title}</option>)}
-              {devices && devices.windows.length === 0 && <option disabled>{isLinux ? "None found (install wmctrl)" : "None found"}</option>}
+              {devices.windows.map((w) => <option key={w.id} value={w.id}>{w.title}</option>)}
+              {devices.windows.length === 0 && <option disabled>{isLinux ? "None found (install wmctrl)" : "None found"}</option>}
             </select>
           ) : sourceMode === "region" ? (
             <div className="flex items-center gap-1.5">
@@ -491,7 +497,7 @@ export function Widget() {
             </div>
           ) : (
             <select className="select !py-1.5 text-xs" value={screenId} onChange={(e) => setScreenId(e.target.value)}>
-              {devices?.screens.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.width}×{s.height})</option>)}
+              {devices.screens.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.width}×{s.height})</option>)}
             </select>
           )}
 
@@ -519,10 +525,15 @@ export function Widget() {
 
           {/* FFmpeg status */}
           {ffmpeg && ffmpeg.kind === "downloading" && (
-            <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-dim)]">
-              <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-              <span className="truncate flex-1">Preparing FFmpeg…</span>
-              <span className="tabular-nums">{Math.round(ffmpeg.progress * 100)}%</span>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-dim)]">
+                <Spinner size={12} />
+                <span className="truncate flex-1">{ffmpeg.message || "Preparing FFmpeg…"}</span>
+                <span className="tabular-nums">{Math.round(ffmpeg.progress * 100)}%</span>
+              </div>
+              <div className="h-1 w-full rounded-full bg-[var(--color-surface-3)] overflow-hidden">
+                <div className="h-full bg-[var(--color-accent)] transition-[width] duration-200 ease-screc" style={{ width: `${Math.max(4, Math.round(ffmpeg.progress * 100))}%` }} />
+              </div>
             </div>
           )}
           {ffmpeg?.kind === "failed" && (
